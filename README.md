@@ -46,11 +46,12 @@ biolib-peeker/
 python -m main_loop --init-page 14772 --store sqlite --log summary
 ```
 
-| Argument      | Description                                |
-|---------------|--------------------------------------------|
-| `--init-page` | Starting BioLib page ID.                   |
-| `--store`     | Storage backend: `memory` or `sqlite`.     |
-| `--log`       | Log level: `none`, `summary`, or `detail`. |
+| Argument      | Description                          | Default     |
+|---------------|--------------------------------------|-------------|
+| `--init-page` | Starting page ID.                    | `"14772"`   |
+| `--store`     | Storage backend.                     | `"sqlite"`  |
+| `--reset`     | Reset existing data before crawling. | `False`     |
+| `--log`       | Log level.                           | `"summary"` |
 
 ## Disclaimer
 

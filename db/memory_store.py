@@ -74,3 +74,6 @@ class MemoryStore(AbstractStore):
 
     def close(self) -> None:
         self.file.close()
+
+    def __len__(self) -> int:
+        return len(self.q)

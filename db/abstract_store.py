@@ -44,3 +44,7 @@ class AbstractStore(ABC):
     @abstractmethod
     def close(self) -> None:
         pass
+
+    @abstractmethod
+    def __len__(self) -> int:
+        pass

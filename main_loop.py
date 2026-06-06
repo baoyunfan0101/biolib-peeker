@@ -1,5 +1,6 @@
 import argparse
 from biolib_parser import resolve_page
+from typing import Optional
 from db.abstract_store import AbstractStore
 from db.sqlite_store import SqliteStore
 from db.memory_store import MemoryStore
@@ -13,11 +14,15 @@ LOG_MODE = {
 
 # main loop
 def main(
-        init_page: str = "14772",
+        init_page: Optional[str] = "14772",
         store: AbstractStore = None,
         log_mode: int = LOG_MODE["summary"],
 ):
-    store.push(init_page)
+    if init_page is not None:
+        store.push(init_page)
+
+    if log_mode == LOG_MODE["summary"]:
+        print(f"[START] pages_pending={len(store)}")
 
     while True:
         curr_page_id = store.pop()
@@ -92,6 +97,12 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="reset existing data before crawling"
+    )
+
+    parser.add_argument(
         "--log",
         choices=["none", "summary", "detail"],
         default="summary",
@@ -105,11 +116,11 @@ if __name__ == "__main__":
     args = parse_args()
 
     main(
-        init_page=args.init_page,
+        init_page=args.init_page if args.reset else None,
         store=(
-            MemoryStore(reset=False)
+            MemoryStore(reset=args.reset)
             if args.store == "memory"
-            else SqliteStore(reset=False)
+            else SqliteStore(reset=args.reset)
         ),
         log_mode=LOG_MODE[args.log],
     )

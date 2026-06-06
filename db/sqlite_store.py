@@ -136,3 +136,10 @@ class SqliteStore(AbstractStore):
 
     def close(self) -> None:
         self.conn.close()
+
+    def __len__(self) -> int:
+        cur = self.conn.execute(
+            "SELECT COUNT(*) FROM pages WHERE status = ?",
+            (PAGE_STATUS["PENDING"],)
+        )
+        return cur.fetchone()[0]
