@@ -127,7 +127,7 @@ def parse_children(taxa_soup):
 def parse_synonyms(synonyms_soup):
     content_of_interest = []
 
-    current_category = "scientific_synonyms"
+    current_category = "synonyms"
 
     p_tag = synonyms_soup.find("p")
 
@@ -139,7 +139,26 @@ def parse_synonyms(synonyms_soup):
 
         if isinstance(child, NavigableString):
             inner_text = child.strip()
-            if inner_text:
+            # if inner_text is None or empty
+            if not inner_text:
+                continue
+
+            first_word = inner_text.split()[0]
+            # case with included synonyms: id=470105
+            if first_word == "incl.":
+                # mark current category as "synonyms_included"
+                current_category = "synonyms_included"
+                synonym_item["category"] = current_category
+                synonym_item["scientific_name"] = "".join(inner_text.split()[1:])
+            elif first_word == ",":
+                content_of_interest.append(synonym_item)
+
+                # create a new item of category "synonyms_included"
+                synonym_item = ITEM_FORMAT.copy()
+                synonym_item["category"] = current_category
+                synonym_item["scientific_name"] = "".join(inner_text.split()[1:])
+
+            else:
                 synonym_item["scientific_name"] = inner_text
 
         if isinstance(child, Tag):
@@ -147,8 +166,9 @@ def parse_synonyms(synonyms_soup):
                 if synonym_item["scientific_name"] != "" or synonym_item["authority_year"] != "":
                     content_of_interest.append(synonym_item)
 
-                    # create a new item
+                    # create a new item and reset the category
                     synonym_item = ITEM_FORMAT.copy()
+                    current_category = "synonyms"
                     synonym_item["category"] = current_category
 
             elif child.name == "em":
@@ -214,7 +234,10 @@ def display_content(content_of_interest):
 if __name__ == "__main__":
     # display_content(resolve_page("14772")) # initial page
     # display_content(resolve_page("14778")) # a cross-page case
-    # display_content(resolve_page("464996")) # a leaf-node case
+    # display_content(resolve_page("464996")) # a leaf-node case with a few synonyms
     # display_content(resolve_page("369498")) # a leaf-node case with a lot of synonyms
     # display_content(resolve_page("557990")) # a internal-node case without synonyms
+    # display_content(resolve_page("470105")) # a case with two included synonyms in a line
+    # display_content(resolve_page("135417")) # a case with an included synonym
+    # display_content(resolve_page("14866")) # a case with an included synonym
     pass

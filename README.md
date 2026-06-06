@@ -42,8 +42,14 @@ biolib-peeker/
 
 ## Run
 
+First run:
 ```bash
-python -m main_loop --init-page 14772 --store sqlite --log summary
+python -m main_loop --init-page 14772 --store sqlite --reset --log summary
+```
+
+Resume unfinished pages (only with **SqliteStore**):
+```bash
+python -m main_loop --store sqlite --log summary
 ```
 
 | Argument      | Description                          | Default     |

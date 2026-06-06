@@ -16,7 +16,8 @@ CATEGORY = {
     "hybrid": 3,
     "fossil_included": 4,
     "fossil_unplaced": 5,
-    "scientific_synonyms": 6,
+    "synonyms": 6,
+    "synonym_included": 7,
 }
 
 
