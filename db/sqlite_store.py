@@ -57,7 +57,7 @@ class SqliteStore(AbstractStore):
 
         # recover unfinished pages
         self.conn.execute(
-            "UPDATE pages SET status = ? WHERE id = ?",
+            "UPDATE pages SET status = ? WHERE status = ?",
             (PAGE_STATUS["PENDING"], PAGE_STATUS["PROCESSING"])
         )
 
