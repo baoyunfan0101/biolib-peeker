@@ -13,11 +13,11 @@ PAGE_STATUS = {
 CATEGORY = {
     "included": 1,
     "unplaced": 2,
-    "hybrid": 3,
+    "hybrids": 3,
     "fossil_included": 4,
     "fossil_unplaced": 5,
     "synonyms": 6,
-    "synonym_included": 7,
+    "synonyms_included": 7,
 }
 
 

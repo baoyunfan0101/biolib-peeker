@@ -181,7 +181,7 @@ def parse_synonyms(synonyms_soup):
 
 
 # main entry
-def resolve_page(page_id, max_retries=MAX_RETRY):
+def resolve_page(page_id, max_retries=MAX_RETRY, is_first=True):
     if page_id is None or page_id == "":
         return []
     else:
@@ -191,14 +191,15 @@ def resolve_page(page_id, max_retries=MAX_RETRY):
     content_of_interest = []
 
     # parse synonyms (if applicable)
-    synonyms_soup = soup.find(
-        "div",
-        class_="clbarbodyl2"
-    )
-    if synonyms_soup is not None:
-        h2_tag = synonyms_soup.find("h2")
-        if h2_tag is not None and "Scientific synonyms" in h2_tag.get_text():
-            content_of_interest += parse_synonyms(synonyms_soup)
+    if is_first:
+        synonyms_soup = soup.find(
+            "div",
+            class_="clbarbodyl2"
+        )
+        if synonyms_soup is not None:
+            h2_tag = synonyms_soup.find("h2")
+            if h2_tag is not None and "Scientific synonyms" in h2_tag.get_text():
+                content_of_interest += parse_synonyms(synonyms_soup)
 
     # parse taxa children (if applicable)
     taxa_soup = soup.find(
@@ -216,7 +217,11 @@ def resolve_page(page_id, max_retries=MAX_RETRY):
     if next_button is not None:
         next_a_tag = next_button.find("a")
         if next_a_tag is not None:
-            content_of_interest += resolve_page(next_a_tag.get("href")[12:])
+            content_of_interest += resolve_page(
+                page_id=next_a_tag.get("href")[12:],
+                max_retries=max_retries,
+                is_first=False
+            )
 
     return content_of_interest
 
@@ -233,11 +238,13 @@ def display_content(content_of_interest):
 
 if __name__ == "__main__":
     # display_content(resolve_page("14772")) # initial page
-    # display_content(resolve_page("14778")) # a cross-page case
+    # display_content(resolve_page("39462")) # a cross-page case
+    # display_content(resolve_page("14900")) # a 12-cross-pages case
     # display_content(resolve_page("464996")) # a leaf-node case with a few synonyms
     # display_content(resolve_page("369498")) # a leaf-node case with a lot of synonyms
     # display_content(resolve_page("557990")) # a internal-node case without synonyms
     # display_content(resolve_page("470105")) # a case with two included synonyms in a line
     # display_content(resolve_page("135417")) # a case with an included synonym
     # display_content(resolve_page("14866")) # a case with an included synonym
+    display_content(resolve_page("62144")) # a case with hybrids
     pass
