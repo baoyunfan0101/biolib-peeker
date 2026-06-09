@@ -76,6 +76,10 @@ def parse_children(taxa_soup):
 
             if child.name == "h2":
                 current_category = child.text.split()[0].lower()
+                ########################################
+                if current_category == "nomina":
+                    current_category += '_' + child.text.split()[1]
+                ########################################
 
             elif child.name == "div":
                 child_class = child.get("class")
@@ -122,7 +126,6 @@ def parse_children(taxa_soup):
                 content_of_interest.append(div_item)
 
     return content_of_interest
-
 
 def parse_synonyms(synonyms_soup):
     content_of_interest = []
@@ -246,5 +249,7 @@ if __name__ == "__main__":
     # display_content(resolve_page("470105")) # a case with two included synonyms in a line
     # display_content(resolve_page("135417")) # a case with an included synonym
     # display_content(resolve_page("14866")) # a case with an included synonym
-    display_content(resolve_page("62144")) # a case with hybrids
+    # display_content(resolve_page("62144")) # a case with hybrids
+    display_content(resolve_page("276780")) # a case with category "Nomina dubia"
+
     pass

@@ -11,15 +11,16 @@ PAGE_STATUS = {
 }
 
 CATEGORY = {
-    "included": 1,
-    "unplaced": 2,
-    "hybrids": 3,
-    "fossil_included": 4,
-    "fossil_unplaced": 5,
-    "synonyms": 6,
-    "synonyms_included": 7,
+    "included":          10,
+    "unplaced":          20,
+    "hybrids":           30,
+    "fossil_included":   40,
+    "fossil_unplaced":   41,
+    "nomina_dubia":      50,
+    "nomina_nuda":       51,
+    "synonyms":          100,
+    "synonyms_included": 101,
 }
-
 
 class AbstractStore(ABC):
     @abstractmethod

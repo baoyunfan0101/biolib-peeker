@@ -41,7 +41,7 @@ class SqliteStore(AbstractStore):
             CREATE TABLE IF NOT EXISTS taxa (
                 id TEXT PRIMARY KEY,
                 parent TEXT,
-                category TEXT,
+                category INTEGER,
                 rank TEXT,
                 scientific_name TEXT,
                 authority_year TEXT,
