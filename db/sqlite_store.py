@@ -3,6 +3,59 @@ import sqlite3
 from typing import Optional
 from db.abstract_store import *
 
+PAGE_STATUS = {
+    "PENDING": 0,
+    "PROCESSING": 1,
+    "DONE": 2,
+    "FAILED": 3,
+}
+
+RANK = {  # sorted by hierarchy
+    'root': 1,
+    'domain': 30,
+    'superregnum': 50,
+    'regnum': 51,
+    'subregnum': 52,
+    'system': 10,
+    'kingdom': 60,
+    'divisio': 70,
+    'subdivisio': 80,
+    'superphylum': 100,
+    'phylum': 101,
+    'subphylum': 102,
+    'infraphylum': 103,
+    'superclassis': 200,
+    'class': 201,
+    'subclass': 202,
+    'infraclass': 203,
+    'cohor': 250,
+    'superorder': 300,
+    'order': 301,
+    'suborder': 302,
+    'infraorder': 303,
+    'parvorder': 304,
+    'falanga': 350,
+    'superfamily': 400,
+    'family': 401,
+    'subfamily': 402,
+    'supertribus': 450,
+    'tribus': 451,
+    'subtribus': 452,
+    'intergeneric': 500,
+    'genus': 501,
+    'subgenus': 502,
+    'section': 503,
+    'species': 601,
+    'subspecies': 610,
+    'varietas': 620,
+    'form': 621,
+    'cultivar': 622,
+    'agregate': 730,
+    'chimera': 731,
+    'group': 740,
+    'hybrid': 750,
+}
+
 DB_NAME = "taxa.db"
 
 
@@ -25,28 +78,42 @@ class SqliteStore(AbstractStore):
     def _reset_table(self):
         self.conn.execute("DROP TABLE IF EXISTS pages")
         self.conn.execute("DROP TABLE IF EXISTS taxa")
-
+        self.conn.execute("DROP TABLE IF EXISTS synonym")
         self.conn.commit()
 
     def _init_tables(self):
         self.conn.execute(f"""
             CREATE TABLE IF NOT EXISTS pages (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT UNIQUE NOT NULL,
+                id INTEGER UNIQUE NOT NULL,
                 status INTEGER NOT NULL DEFAULT {PAGE_STATUS["PENDING"]}
             )
         """)
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS taxa (
-                id TEXT PRIMARY KEY,
-                parent TEXT,
+                id INTEGER PRIMARY KEY,
+                parent INTEGER,
                 category INTEGER,
-                rank TEXT,
+                rank INTEGER,
                 scientific_name TEXT,
                 authority_year TEXT,
                 geological_range TEXT,
                 english_name TEXT
+            )
+        """)
+
+        # Insert root `Vitae` in to table `taxa`...
+        self.conn.execute(f"""INSERT OR IGNORE INTO taxa VALUES (14772,-1,
+            {CATEGORY['included']},{RANK['root']},'Vitae','','','living organisms')""")
+
+        # Create table `synonym` if not exists...
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS synonym (
+                parent INTEGER,
+                category INTEGER,
+                synonym TEXT,
+                authority_year TEXT
             )
         """)
 
@@ -57,18 +124,18 @@ class SqliteStore(AbstractStore):
 
         # recover unfinished pages
         self.conn.execute(
-            "UPDATE pages SET status = ? WHERE status = ?",
-            (PAGE_STATUS["PENDING"], PAGE_STATUS["PROCESSING"])
+            "UPDATE pages SET status = ? WHERE status = ? OR status = ?",
+            (PAGE_STATUS["PENDING"], PAGE_STATUS["PROCESSING"], PAGE_STATUS['FAILED'])
         )
 
         # persist changes
         self.conn.commit()
 
     def pop(self) -> Optional[str]:
-        cur = self.conn.execute("""
+        cur = self.conn.execute(f"""
             SELECT id
             FROM pages
-            WHERE status = 0
+            WHERE status = {PAGE_STATUS['PENDING']}
             ORDER BY seq
             LIMIT 1
         """)
@@ -126,11 +193,29 @@ class SqliteStore(AbstractStore):
             item["id"],
             item["parent"],
             CATEGORY.get(item["category"]),
-            item["rank"],
+            RANK.get(item["rank"]),
             item["scientific_name"],
             item["authority_year"],
             item["geological_range"],
             item["english_name"],
+        ))
+        self.conn.commit()
+
+    # Write a record to table `synonym`...
+    def write_synonym(self, item) -> None:
+        self.conn.execute("""
+            INSERT OR IGNORE INTO synonym (
+                parent,
+                category,
+                synonym,
+                authority_year
+            )
+            VALUES (?, ?, ?, ?)
+        """, (
+            item["parent"],
+            CATEGORY.get(item["category"]),
+            item["scientific_name"],
+            item["authority_year"],
         ))
         self.conn.commit()
 

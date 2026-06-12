@@ -1,26 +1,25 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-__all__ = ["PAGE_STATUS", "CATEGORY", "AbstractStore"]
-
-PAGE_STATUS = {
-    "PENDING": 0,
-    "PROCESSING": 1,
-    "DONE": 2,
-    "FAILED": 3,
-}
+__all__ = ["AbstractStore", "CATEGORY"]
 
 CATEGORY = {
-    "included":          10,
-    "unplaced":          20,
-    "hybrids":           30,
-    "fossil_included":   40,
-    "fossil_unplaced":   41,
-    "nomina_dubia":      50,
-    "nomina_nuda":       51,
-    "synonyms":          100,
-    "synonyms_included": 101,
+    "included": 10,
+    "unplaced": 20,
+    "hybrids": 30,
+    "fossil_included": 40,
+    "fossil_unplaced": 41,
+    "nomina_dubia": 50,
+    "nomina_nuda": 51,
+    "synonyms": 100,
+    "synonyms_included": 110,
+    "synonyms_nomen_nudum": 111,
+    "synonyms_partim.": 112,
+    "synonyms_misspelling": 113,
+    "unjustified_emendation": 120,
+    "unjustified_replacement_name": 121,
 }
+
 
 class AbstractStore(ABC):
     @abstractmethod
@@ -41,6 +40,10 @@ class AbstractStore(ABC):
 
     @abstractmethod
     def write(self, item: dict) -> None:
+        pass
+
+    @abstractmethod
+    def write_synonym(self, item: dict) -> None:
         pass
 
     @abstractmethod

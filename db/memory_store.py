@@ -72,6 +72,9 @@ class MemoryStore(AbstractStore):
         self.writer.writerow(row)
         self.file.flush()
 
+    def write_synonym(self, item: dict) -> None:
+        self.write(item)
+
     def close(self) -> None:
         self.file.close()
 

@@ -52,12 +52,13 @@ def main(
                     if log_mode == LOG_MODE["detail"]:
                         print(f"\tPush child {new_page_id}")
 
-                # item referring to a synonym
+                # item with empty `id` referring to a synonym
                 else:
                     # give synonym a man-made id
-                    synonym_cnt += 1
-                    item["id"] = f"{curr_page_id}-{synonym_cnt}"
-                    store.write(item)
+                    # synonym_cnt += 1
+                    # item["id"] = f"{curr_page_id}-{synonym_cnt}"
+                    # store.write(item)
+                    store.write_synonym(item)
 
                     if log_mode == LOG_MODE["detail"]:
                         print(f"\tAdd synonym {item['id']}")

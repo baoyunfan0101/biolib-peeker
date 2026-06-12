@@ -76,11 +76,9 @@ def parse_children(taxa_soup):
 
             if child.name == "h2":
                 current_category = child.text.split()[0].lower()
-                ########################################
+                # `nomina` => `nomina_dubia` or `nomina_nuda`
                 if current_category == "nomina":
                     current_category += '_' + child.text.split()[1]
-                ########################################
-
             elif child.name == "div":
                 child_class = child.get("class")
                 if child_class is None or child_class[0] not in ["treediv", "treeenddiv"]:
@@ -100,7 +98,8 @@ def parse_children(taxa_soup):
 
                 if len(a_tags) >= 1:
                     div_item["id"] = None if a_tags[0] is None else a_tags[0].get("href")[12:-1]
-                    div_item["scientific_name"] = None if a_tags[0] is None else a_tags[0].get_text(strip=True)
+                    # diable strip in case with `<em>Scientific synonym</em> var. <em>variata</em>`
+                    div_item["scientific_name"] = None if a_tags[0] is None else a_tags[0].get_text(strip=False)
                     if len(a_tags) >= 2 and current_category == "fossil":
                         if a_tags[-1].get("href") == "#incertaesedis":
                             div_item["category"] += "_unplaced"
@@ -127,6 +126,7 @@ def parse_children(taxa_soup):
 
     return content_of_interest
 
+
 def parse_synonyms(synonyms_soup):
     content_of_interest = []
 
@@ -137,6 +137,7 @@ def parse_synonyms(synonyms_soup):
     # create a new item
     synonym_item = ITEM_FORMAT.copy()
     synonym_item["category"] = current_category
+    is_first_synonyms = True
 
     for child in p_tag.children:
 
@@ -162,7 +163,11 @@ def parse_synonyms(synonyms_soup):
                 synonym_item["scientific_name"] = "".join(inner_text.split()[1:])
 
             else:
-                synonym_item["scientific_name"] = inner_text
+                # strip('"') in case of `<em></em>""Scientific synonym""<em></em>`
+                if synonym_item["scientific_name"] == "":
+                    synonym_item["scientific_name"] = inner_text.strip('"')
+                else:
+                    synonym_item["scientific_name"] += " " + inner_text.strip('"')
 
         if isinstance(child, Tag):
             if child.name == "br":
@@ -175,10 +180,35 @@ def parse_synonyms(synonyms_soup):
                     synonym_item["category"] = current_category
 
             elif child.name == "em":
-                synonym_item["scientific_name"] = child.get_text(strip=True)
+                inner_text = child.get_text(strip=True)
+                if not inner_text:
+                    continue
+
+                # case with `<em></em>""Scientific synonym""<em></em>`
+                if synonym_item["scientific_name"] == "":
+                    synonym_item["scientific_name"] = inner_text
+                # case with `<em>Scientific synonym</em> var. <em>variata</em>`
+                else:
+                    synonym_item["scientific_name"] += " " + inner_text
 
             elif child.name == "small":
-                synonym_item["authority_year"] = child.get_text(strip=True)
+                inner_text = child.get_text(strip=True)
+
+                # get extra catagory in case with "<small>(category)</small>"
+                if inner_text == "(nomen nudum)":
+                    synonym_item["category"] = "synonyms_nomen_nudum"
+                elif inner_text == "(partim.)":
+                    synonym_item["category"] = "synonyms_partim."
+                elif inner_text == "(misspelling)":
+                    synonym_item["category"] = "synonyms_misspelling"
+                elif inner_text == "(unjustified emendation)":
+                    synonym_item["category"] = "unjustified_emendation"
+                elif inner_text == "(unjustified replacement name)":
+                    synonym_item["category"] = "unjustified_replacement_name"
+
+                # case with "<small>Authority, year</small>"
+                else:
+                    synonym_item["authority_year"] = inner_text
 
     return content_of_interest
 
@@ -188,7 +218,8 @@ def resolve_page(page_id, max_retries=MAX_RETRY, is_first=True):
     if page_id is None or page_id == "":
         return []
     else:
-        url = BASE_URL + page_id
+        # url = BASE_URL + page_id
+        url = f"{BASE_URL}{page_id}/"
 
     soup = get_page(url, max_retries=max_retries)
     content_of_interest = []
@@ -240,16 +271,26 @@ def display_content(content_of_interest):
 
 
 if __name__ == "__main__":
-    # display_content(resolve_page("14772")) # initial page
-    # display_content(resolve_page("39462")) # a cross-page case
-    # display_content(resolve_page("14900")) # a 12-cross-pages case
-    # display_content(resolve_page("464996")) # a leaf-node case with a few synonyms
-    # display_content(resolve_page("369498")) # a leaf-node case with a lot of synonyms
-    # display_content(resolve_page("557990")) # a internal-node case without synonyms
-    # display_content(resolve_page("470105")) # a case with two included synonyms in a line
-    # display_content(resolve_page("135417")) # a case with an included synonym
-    # display_content(resolve_page("14866")) # a case with an included synonym
-    # display_content(resolve_page("62144")) # a case with hybrids
-    display_content(resolve_page("276780")) # a case with category "Nomina dubia"
+    # display_content(resolve_page(14772)) # initial page
+    # display_content(resolve_page(39462))  # a cross-page case
+    # display_content(resolve_page(14900)) # a 12-cross-pages case
+    # display_content(resolve_page(464996)) # a leaf-node case with a few synonyms
+    # display_content(resolve_page(369498)) # a leaf-node case with a lot of synonyms
+    # display_content(resolve_page(557990)) # a internal-node case without synonyms
+    # display_content(resolve_page(470105)) # a case with two included synonyms in a line
+    # display_content(resolve_page(135417)) # a case with an included synonym
+    # display_content(resolve_page(14866)) # a case with an included synonym
+    # display_content(resolve_page(62144)) # a case with category `hybrids`
+    # display_content(resolve_page(276780)) # a case with category `Nomina dubia`
+    # display_content(resolve_page(40847)) # a case with rank `subgen.` & `sect.`
+    # display_content(resolve_page(3633)) # a case with category `cultivar`
+    # display_content(resolve_page(1135185)) # a case with scientific name life `+ Crataegomespilus`
+    # display_content(resolve_page(94423)) # a case with synonym category (unjustified emendation)
+    # display_content(resolve_page(468440)) # a case with synonym category (misspelling)
+    # display_content(resolve_page(557851)) # a case with synonym category (partim.)
+    # display_content(resolve_page(94423)) # a case with synonym category (unjustified emendation)
+    # display_content(resolve_page(94425)) # a case with synonym category (unjustified replacement name)
+    # display_content(resolve_page(475820)) # a case with synonym like `""Scientific synonym""`
+    # display_content(resolve_page(2083595)) # a case with synonym like `Scientific synonym f. forma`
 
     pass
