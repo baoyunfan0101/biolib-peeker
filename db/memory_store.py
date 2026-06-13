@@ -4,14 +4,14 @@ from pathlib import Path
 from typing import Optional
 from db.abstract_store import *
 
-CSV_NAME = "taxa.csv"
+CSV_NAME = 'taxa.csv'
 
 
 class MemoryStore(AbstractStore):
 
     def __init__(
             self,
-            path: str = "./data",
+            path: str = './data',
             reset: bool = False,
     ) -> None:
         self.q = deque()
@@ -25,19 +25,19 @@ class MemoryStore(AbstractStore):
         if reset and csv_path.exists():
             csv_path.unlink()
 
-        self.file = open(csv_path, "a", newline="", encoding="utf-8")
+        self.file = open(csv_path, 'a', newline='', encoding='utf-8')
 
         self.writer = csv.DictWriter(
             self.file,
             fieldnames=[
-                "id",
-                "parent",
-                "category",
-                "rank",
-                "scientific_name",
-                "authority_year",
-                "geological_range",
-                "english_name",
+                'id',
+                'parent',
+                'category',
+                'rank',
+                'scientific_name',
+                'authority_year',
+                'geological_range',
+                'english_name',
             ]
         )
 
@@ -65,15 +65,18 @@ class MemoryStore(AbstractStore):
     def mark_failed(self, page_id: str) -> None:
         pass
 
-    def write(self, item: dict) -> None:
+    def _write(self, item: dict) -> None:
         row = item.copy()
-        row["category"] = CATEGORY.get(row["category"])
+        row['category'] = CATEGORY.get(row['category'])
 
         self.writer.writerow(row)
         self.file.flush()
 
+    def write_taxa(self, item: dict) -> None:
+        self._write(item)
+
     def write_synonym(self, item: dict) -> None:
-        self.write(item)
+        self._write(item)
 
     def close(self) -> None:
         self.file.close()
