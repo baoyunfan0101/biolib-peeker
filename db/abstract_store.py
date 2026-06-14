@@ -76,19 +76,19 @@ RANK = {  # sorted by hierarchy
 
 class AbstractStore(ABC):
     @abstractmethod
-    def pop(self) -> Optional[str]:
+    def pop(self) -> Optional[int]:
         pass
 
     @abstractmethod
-    def push(self, page_id: str) -> bool:
+    def push(self, page_id: int) -> bool:
         pass
 
     @abstractmethod
-    def mark_done(self, page_id: str) -> None:
+    def mark_done(self, page_id: int) -> None:
         pass
 
     @abstractmethod
-    def mark_failed(self, page_id: str) -> None:
+    def mark_failed(self, page_id: int) -> None:
         pass
 
     @abstractmethod

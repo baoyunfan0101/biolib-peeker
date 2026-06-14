@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Optional
 from db.abstract_store import *
 
-CSV_NAME = 'taxa.csv'
+TAXA_NAME = 'taxa.csv'
+SYNONYM_NAME = 'synonyms.csv'
 
 
 class MemoryStore(AbstractStore):
@@ -14,21 +15,28 @@ class MemoryStore(AbstractStore):
             path: str = './data',
             reset: bool = False,
     ) -> None:
-        self.q = deque()
-        self.s = set()
+        self.queue = deque()
+        self.seen = set()
+        self.processing = set()
+        self.done = set()
+        self.failed = set()
 
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
+        taxa_path = path / TAXA_NAME
+        synonym_path = path / SYNONYM_NAME
 
-        csv_path = path / CSV_NAME
+        if reset:
+            if taxa_path.exists():
+                taxa_path.unlink()
+            if synonym_path.exists():
+                synonym_path.unlink()
 
-        if reset and csv_path.exists():
-            csv_path.unlink()
+        self.taxa_file = open(taxa_path, 'a', newline='', encoding='utf-8')
+        self.synonym_file = open(synonym_path, 'a', newline='', encoding='utf-8')
 
-        self.file = open(csv_path, 'a', newline='', encoding='utf-8')
-
-        self.writer = csv.DictWriter(
-            self.file,
+        self.taxa_writer = csv.DictWriter(
+            self.taxa_file,
             fieldnames=[
                 'id',
                 'parent',
@@ -40,46 +48,84 @@ class MemoryStore(AbstractStore):
                 'english_name',
             ]
         )
+        self.synonym_writer = csv.DictWriter(
+            self.synonym_file,
+            fieldnames=[
+                'parent',
+                'category',
+                'synonym',
+                'authority_year',
+            ]
+        )
 
-        if csv_path.stat().st_size == 0:
-            self.writer.writeheader()
+        if taxa_path.stat().st_size == 0:
+            self.taxa_writer.writeheader()
+        if synonym_path.stat().st_size == 0:
+            self.synonym_writer.writeheader()
 
-    def pop(self) -> Optional[str]:
-        if not self.q:
-            return None
+        self.taxa_writer.writerow({
+            'id': 14772,
+            'parent': -1,
+            'category': CATEGORY['included'],
+            'rank': RANK['root'],
+            'scientific_name': 'Vitae',
+            'authority_year': '',
+            'geological_range': '',
+            'english_name': 'living organisms',
+        })
+        self.taxa_file.flush()
 
-        return self.q.popleft()
+    def pop(self) -> Optional[int]:
+        while self.queue:
+            page_id = self.queue.popleft()
+            if page_id in self.done:
+                continue
+            self.processing.add(page_id)
+            return page_id
 
-    def push(self, page_id: str) -> bool:
-        if page_id in self.s:
+        return None
+
+    def push(self, page_id: int) -> bool:
+        if page_id in self.seen:
             return False
-
-        self.s.add(page_id)
-        self.q.append(page_id)
+        self.seen.add(page_id)
+        self.queue.append(page_id)
 
         return True
 
-    def mark_done(self, page_id: str) -> None:
-        pass
+    def mark_done(self, page_id: int) -> None:
+        self.processing.discard(page_id)
+        self.done.add(page_id)
 
-    def mark_failed(self, page_id: str) -> None:
-        pass
-
-    def _write(self, item: dict) -> None:
-        row = item.copy()
-        row['category'] = CATEGORY.get(row['category'])
-
-        self.writer.writerow(row)
-        self.file.flush()
+    def mark_failed(self, page_id: int) -> None:
+        self.processing.discard(page_id)
+        self.failed.add(page_id)
 
     def write_taxa(self, item: dict) -> None:
-        self._write(item)
+        self.taxa_writer.writerow({
+            'id': item['id'],
+            'parent': item['parent'],
+            'category': CATEGORY.get(item['category']),
+            'rank': RANK.get(item['rank']),
+            'scientific_name': item['scientific_name'],
+            'authority_year': item['authority_year'],
+            'geological_range': item['geological_range'],
+            'english_name': item['english_name'],
+        })
+        self.taxa_file.flush()
 
     def write_synonym(self, item: dict) -> None:
-        self._write(item)
+        self.synonym_writer.writerow({
+            'parent': item['parent'],
+            'category': CATEGORY.get(item['category']),
+            'synonym': item['scientific_name'],
+            'authority_year': item['authority_year'],
+        })
+        self.synonym_file.flush()
 
     def close(self) -> None:
-        self.file.close()
+        self.taxa_file.close()
+        self.synonym_file.close()
 
     def __len__(self) -> int:
-        return len(self.q)
+        return len(self.queue)

@@ -1,6 +1,8 @@
 from pathlib import Path
 import sqlite3
-from typing import Optional
+import threading
+import time
+from typing import Any, Callable, Optional
 from db.abstract_store import *
 
 DB_NAME = 'taxa.db'
@@ -14,8 +16,10 @@ class SqliteStore(AbstractStore):
     ) -> None:
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
+        self.db_path = path / DB_NAME
 
-        self.conn = sqlite3.connect(path / DB_NAME)
+        # create a thread-local storage, where each thread accesses its own connection
+        self._local = threading.local()
 
         if reset:
             self._reset()
@@ -24,160 +28,278 @@ class SqliteStore(AbstractStore):
             self._init()
             self._recover()
 
-    def _init(self):
-        self.conn.execute(f'''
-            CREATE TABLE IF NOT EXISTS pages (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id INTEGER UNIQUE NOT NULL,
-                status INTEGER NOT NULL DEFAULT {PAGE_STATUS['PENDING']}
+    def _conn(self) -> sqlite3.Connection:
+        # if the current thread does not have a connection
+        if not hasattr(self._local, 'conn'):
+            conn = sqlite3.connect(
+                self.db_path,
+                timeout=30,  # wait up to 30s when db is locked
+                isolation_level=None,  # manually control transactions and database locks
             )
-        ''')
 
-        self.conn.execute('''
-            CREATE TABLE IF NOT EXISTS taxa (
-                id INTEGER PRIMARY KEY,
-                parent INTEGER,
-                category INTEGER,
-                rank INTEGER,
-                scientific_name TEXT,
-                authority_year TEXT,
-                geological_range TEXT,
-                english_name TEXT
-            )
-        ''')
+            conn.execute('PRAGMA journal_mode=WAL')  # WAL: allow reading while another thread is writing
+            conn.execute('PRAGMA synchronous=NORMAL')  # NORMAL: reduce disk synchronization frequency
+            conn.execute('PRAGMA busy_timeout=30000')  # wait 30000ms when db is locked
 
-        # Insert root 'Vitae' in to table 'taxa'...
-        self.conn.execute(f'''
-            INSERT OR IGNORE INTO taxa VALUES
-            (14772,-1,{CATEGORY['included']},{RANK['root']},'Vitae','','','living organisms')
-        ''')
+            self._local.conn = conn
+        return self._local.conn
 
-        # Create table 'synonyms' if not exists...
-        self.conn.execute('''
-            CREATE TABLE IF NOT EXISTS synonyms (
-                parent INTEGER,
-                category INTEGER,
-                synonym TEXT,
-                authority_year TEXT
-            )
-        ''')
+    def _init(self) -> None:
+        def work(conn: sqlite3.Connection) -> None:
+            conn.execute('BEGIN IMMEDIATE')  # start a transaction and acquire a write lock
+            try:
+                conn.execute(f'''
+                    CREATE TABLE IF NOT EXISTS pages (
+                        seq INTEGER PRIMARY KEY AUTOINCREMENT
+                        ,id INTEGER UNIQUE NOT NULL
+                        ,status INTEGER NOT NULL DEFAULT {PAGE_STATUS['PENDING']}
+                    )
+                ''')
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS taxa (
+                        id INTEGER PRIMARY KEY
+                        ,parent INTEGER
+                        ,category INTEGER
+                        ,rank INTEGER
+                        ,scientific_name TEXT
+                        ,authority_year TEXT
+                        ,geological_range TEXT
+                        ,english_name TEXT
+                    )
+                ''')
+                conn.execute('''
+                    INSERT OR IGNORE INTO taxa VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    14772,
+                    -1,
+                    CATEGORY['included'],
+                    RANK['root'],
+                    'Vitae',
+                    '',
+                    '',
+                    'living organisms',
+                ))  # insert root 'Vitae'
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS synonyms (
+                        parent INTEGER
+                        ,category INTEGER
+                        ,synonym TEXT
+                        ,authority_year TEXT
+                        ,PRIMARY KEY (parent, synonym, authority_year)
+                    )
+                ''')
+                conn.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_pages_status_seq
+                    ON pages(status, seq)
+                ''')
+                conn.commit()  # persist changes and release the lock
+            except Exception:
+                conn.rollback()  # roll back the transaction on error
+                raise  # re-raise the original exception
 
-        self.conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_pages_status_seq
-            ON pages(status, seq)
-        ''')
+        self._execute(work)
 
-        # persist changes
-        self.conn.commit()
+    def _reset(self) -> None:
+        def work(conn: sqlite3.Connection) -> None:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                conn.execute('DROP TABLE IF EXISTS pages')
+                conn.execute('DROP TABLE IF EXISTS taxa')
+                conn.execute('DROP TABLE IF EXISTS synonyms')
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
-    def _reset(self):
-        self.conn.execute('DROP TABLE IF EXISTS pages')
-        self.conn.execute('DROP TABLE IF EXISTS taxa')
-        self.conn.execute('DROP TABLE IF EXISTS synonyms')
-        self.conn.commit()
+        self._execute(work)
 
-    def _recover(self):
-        # recover unfinished pages
-        self.conn.execute(
-            'UPDATE pages SET status = ? WHERE status = ? OR status = ?',
-            (PAGE_STATUS['PENDING'], PAGE_STATUS['PROCESSING'], PAGE_STATUS['FAILED'])
-        )
-        self.conn.commit()
+    def _recover(self) -> None:
+        def work(conn: sqlite3.Connection) -> None:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                conn.execute('''
+                    UPDATE pages
+                    SET status = ?
+                    WHERE status = ? OR status = ?
+                ''', (
+                    PAGE_STATUS['PENDING'],
+                    PAGE_STATUS['PROCESSING'],
+                    PAGE_STATUS['FAILED'])
+                             )  # recover unfinished pages
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
-    def pop(self) -> Optional[str]:
-        cur = self.conn.execute(f'''
-            SELECT id
-            FROM pages
-            WHERE status = {PAGE_STATUS['PENDING']}
-            ORDER BY seq
-            LIMIT 1
-        ''')
-        row = cur.fetchone()
+        self._execute(work)
 
-        if row is None:
-            return None
+    def _execute(
+            self,
+            func: Callable[[sqlite3.Connection], Any],
+            max_retries: int = 5,
+    ) -> Any:
+        conn = self._conn()
+        last_error = None
 
-        page_id = row[0]
+        for i in range(max_retries):
+            try:
+                return func(conn)
+            except sqlite3.OperationalError as e:
+                if 'locked' not in str(e).lower():
+                    raise
+                last_error = e
+                time.sleep(0.1 * (i + 1))
 
-        self.conn.execute(
-            'UPDATE pages SET status = ? WHERE id = ?',
-            (PAGE_STATUS['PROCESSING'], page_id)
-        )
-        self.conn.commit()
+        raise RuntimeError(
+            f'{func.__name__}: '
+            f'database is locked after {max_retries} retries; '
+            f'last_error={last_error}'
+        ) from last_error
 
-        return page_id
+    def pop(self) -> Optional[int]:
+        def work(conn: sqlite3.Connection) -> Optional[int]:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                cur = conn.execute(f'''
+                    UPDATE pages
+                    SET status = ?
+                    WHERE id = (
+                        SELECT id
+                        FROM pages
+                        WHERE status = ?
+                        ORDER BY seq
+                        LIMIT 1
+                    )
+                    RETURNING id
+                ''', (
+                    PAGE_STATUS['PROCESSING'],
+                    PAGE_STATUS['PENDING'],
+                ))
+                row = cur.fetchone()
+                conn.commit()
+                return None if row is None else row[0]
+            except Exception:
+                conn.rollback()
+                raise
 
-    def push(self, page_id) -> bool:
-        cur = self.conn.execute(
-            'INSERT OR IGNORE INTO pages(id, status) VALUES (?, ?)',
-            (page_id, PAGE_STATUS['PENDING'])
-        )
-        self.conn.commit()
-        return cur.rowcount == 1
+        return self._execute(work)
 
-    def mark_done(self, page_id) -> None:
-        self.conn.execute(
-            'UPDATE pages SET status = ? WHERE id = ?',
-            (PAGE_STATUS['DONE'], page_id)
-        )
-        self.conn.commit()
+    def push(self, page_id: int) -> bool:
+        def work(conn: sqlite3.Connection) -> bool:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                cur = conn.execute(
+                    'INSERT OR IGNORE INTO pages(id, status) VALUES (?, ?)',
+                    (page_id, PAGE_STATUS['PENDING'])
+                )
+                conn.commit()
+                return cur.rowcount == 1
+            except Exception:
+                conn.rollback()
+                raise
 
-    def mark_failed(self, page_id) -> None:
-        self.conn.execute(
-            'UPDATE pages SET status = ? WHERE id = ?',
-            (PAGE_STATUS['FAILED'], page_id)
-        )
-        self.conn.commit()
+        return self._execute(work)
 
-    def write_taxa(self, item) -> None:
-        self.conn.execute('''
-            INSERT OR IGNORE INTO taxa (
-                id,
-                parent,
-                category,
-                rank,
-                scientific_name,
-                authority_year,
-                geological_range,
-                english_name
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            item['id'],
-            item['parent'],
-            CATEGORY.get(item['category']),
-            RANK.get(item['rank']),
-            item['scientific_name'],
-            item['authority_year'],
-            item['geological_range'],
-            item['english_name'],
-        ))
-        self.conn.commit()
+    def mark_done(self, page_id: int) -> None:
+        def work(conn: sqlite3.Connection) -> None:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                conn.execute(
+                    'UPDATE pages SET status = ? WHERE id = ?',
+                    (PAGE_STATUS['DONE'], page_id)
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        self._execute(work)
+
+    def mark_failed(self, page_id: int) -> None:
+        def work(conn: sqlite3.Connection) -> None:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                conn.execute(
+                    'UPDATE pages SET status = ? WHERE id = ?',
+                    (PAGE_STATUS['FAILED'], page_id)
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        self._execute(work)
+
+    def write_taxa(self, item: dict) -> None:
+        def work(conn: sqlite3.Connection) -> None:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                conn.execute('''
+                    INSERT OR IGNORE INTO taxa (
+                        id
+                        ,parent
+                        ,category
+                        ,rank
+                        ,scientific_name
+                        ,authority_year
+                        ,geological_range
+                        ,english_name
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    item['id'],
+                    item['parent'],
+                    CATEGORY.get(item['category']),
+                    RANK.get(item['rank']),
+                    item['scientific_name'],
+                    item['authority_year'],
+                    item['geological_range'],
+                    item['english_name'],
+                ))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        self._execute(work)
 
     # Write a record to table 'synonyms'...
-    def write_synonym(self, item) -> None:
-        self.conn.execute('''
-            INSERT OR IGNORE INTO synonyms (
-                parent,
-                category,
-                synonym,
-                authority_year
-            )
-            VALUES (?, ?, ?, ?)
-        ''', (
-            item['parent'],
-            CATEGORY.get(item['category']),
-            item['scientific_name'],
-            item['authority_year'],
-        ))
-        self.conn.commit()
+    def write_synonym(self, item: dict) -> None:
+        def work(conn: sqlite3.Connection) -> None:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                conn.execute('''
+                    INSERT OR IGNORE INTO synonyms (
+                        parent
+                        ,category
+                        ,synonym
+                        ,authority_year
+                    )
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    item['parent'],
+                    CATEGORY.get(item['category']),
+                    item['scientific_name'],
+                    item['authority_year'],
+                ))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        self._execute(work)
 
     def close(self) -> None:
-        self.conn.close()
+        if hasattr(self._local, 'conn'):
+            self._local.conn.close()
+            del self._local.conn
 
     def __len__(self) -> int:
-        cur = self.conn.execute(
+        conn = self._conn()
+        cur = conn.execute(
             'SELECT COUNT(*) FROM pages WHERE status = ?',
             (PAGE_STATUS['PENDING'],)
         )
+
         return cur.fetchone()[0]

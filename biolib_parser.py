@@ -1,9 +1,9 @@
 from bs4 import BeautifulSoup, Tag
 import requests
+import threading
 import time
 
 ROOT_URL = 'https://www.biolib.cz/en/'
-BASE_URL = ROOT_URL + 'taxon/id'
 ITEM_FORMAT = {
     'id': '',  # primary key
     'category': '',
@@ -13,15 +13,21 @@ ITEM_FORMAT = {
     'geological_range': '',
     'english_name': '',
 }
-MAX_RETRY = 3
 
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0'
-})
+_local = threading.local()
 
 
-def pass_security_check():
+def _get_session():
+    if not hasattr(_local, 'session'):
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0'
+        })
+        _local.session = session
+    return _local.session
+
+
+def _pass_security_check(session):
     # post payload
     session.post(
         ROOT_URL,
@@ -33,7 +39,8 @@ def pass_security_check():
     )
 
 
-def get_page(url, max_retries=MAX_RETRY):
+def _get_page(url, max_retries=3):
+    session = _get_session()
     errors = []
 
     for _ in range(max_retries):
@@ -50,7 +57,7 @@ def get_page(url, max_retries=MAX_RETRY):
             # if getting security checked
             if soup.find('input', {'name': 'action', 'value': 'passcheck'}):
                 errors.append(RuntimeError('security check triggered'))
-                pass_security_check()
+                _pass_security_check(session)
                 continue
 
             return soup
@@ -65,7 +72,7 @@ def get_page(url, max_retries=MAX_RETRY):
     )
 
 
-def parse_children(taxa_soup):
+def _parse_children(taxa_soup):
     content_of_interest = []
 
     current_category = ''
@@ -127,7 +134,7 @@ def parse_children(taxa_soup):
     return content_of_interest
 
 
-def parse_synonyms(synonyms_soup):
+def _parse_synonyms(synonyms_soup):
     content_of_interest = []
 
     current_category = 'synonyms'
@@ -233,14 +240,13 @@ def parse_synonyms(synonyms_soup):
 
 
 # main entry
-def resolve_page(page_id, max_retries=MAX_RETRY, is_first=True):
+def resolve_page(page_id, max_retries=3, is_first=True):
     if page_id is None or page_id == '':
         return []
     else:
-        # url = BASE_URL + page_id
-        url = f'{BASE_URL}{page_id}/'
+        url = f'{ROOT_URL}taxon/id{page_id}/'
 
-    soup = get_page(url, max_retries=max_retries)
+    soup = _get_page(url, max_retries=max_retries)
     content_of_interest = []
 
     # parse synonyms (if applicable)
@@ -252,7 +258,7 @@ def resolve_page(page_id, max_retries=MAX_RETRY, is_first=True):
         if synonyms_soup is not None:
             h2_tag = synonyms_soup.find('h2')
             if h2_tag is not None and 'Scientific synonyms' in h2_tag.get_text():
-                content_of_interest += parse_synonyms(synonyms_soup)
+                content_of_interest += _parse_synonyms(synonyms_soup)
 
     # parse taxa children (if applicable)
     taxa_soup = soup.find(
@@ -260,7 +266,7 @@ def resolve_page(page_id, max_retries=MAX_RETRY, is_first=True):
         class_='treeareadiv'
     )
     if taxa_soup is not None:
-        content_of_interest += parse_children(taxa_soup)
+        content_of_interest += _parse_children(taxa_soup)
 
     # recurse if this is not the last page, case with multiple pages: id=14772
     next_button = soup.find(
@@ -314,5 +320,7 @@ if __name__ == '__main__':
     # display_content(resolve_page(475820))  # a case with synonym like '""Scientific synonym""'
     # display_content(resolve_page(2083595))  # a case with synonym like 'Scientific synonym f. forma'
     # display_content(resolve_page(40963))  # a synonym case with multiple <em>
+    # display_content(resolve_page(3038))  # a case with two identical synonyms but different authorities
+    # display_content(resolve_page(1363120))  # a case with two identical synonyms
 
     pass
