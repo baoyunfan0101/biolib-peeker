@@ -1,7 +1,10 @@
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    wait,
+    FIRST_COMPLETED,
+)
 import threading
-import time
 from typing import Optional
 from biolib_parser import resolve_page
 from db.abstract_store import AbstractStore
@@ -15,104 +18,193 @@ LOG_MODE = {
 }
 
 
+def log_summary(
+        log_mode: int,
+        title: str,
+        stats: dict,
+        pending: int,
+) -> None:
+    if log_mode == LOG_MODE['none']:
+        return
+    print(
+        f'[{title}] '
+        f"processed={stats['processed']}, "
+        f"failed={stats['failed']}, "
+        f"children={stats['children']}, "
+        f"synonyms={stats['synonyms']}, "
+        f'pending={pending}',
+        flush=True,
+    )
+
+
+def log_done(
+        log_mode: int,
+        page_id: int,
+        child_cnt: int,
+        synonym_cnt: int,
+) -> None:
+    if log_mode != LOG_MODE['detail']:
+        return
+    print(
+        f'[DONE] '
+        f'page={page_id}, '
+        f'children={child_cnt}, '
+        f'synonyms={synonym_cnt}',
+        flush=True,
+    )
+
+
+def log_failed(
+        log_mode: int,
+        page_id: int,
+        error: Exception,
+) -> None:
+    if log_mode != LOG_MODE['detail']:
+        return
+    print(
+        f'[FAILED] '
+        f'page={page_id}, '
+        f'error={error}',
+        flush=True,
+    )
+
+
 # main loop
 def main(
         init_page: Optional[int] = 14772,
         store: AbstractStore = None,
-        log_mode: int = LOG_MODE['summary'],
         workers: int = 8,
-        idle_rounds: int = 30,
-        idle_sleep: float = 1.0,
-):
-    if workers > 1 and not isinstance(store, SqliteStore):
-        raise ValueError('multi-threading is only supported with SqliteStore')
+        batch_size: int = 50,
+        log_mode: int = LOG_MODE['summary'],
+) -> None:
     stop_event = threading.Event()  # event to stop all worker threads
-
+    stats = {
+        'processed': 0,
+        'failed': 0,
+        'children': 0,
+        'synonyms': 0,
+    }
     if init_page is not None:
-        store.push(init_page)
-    if log_mode == LOG_MODE['summary']:
-        print(f'[START] pages_pending={len(store)}')
+        store.push([init_page])
+    log_summary(
+        log_mode,
+        'START',
+        stats,
+        len(store),
+    )
+    executor = ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix='T',
+    )
 
-    def worker():
-        thread_name = threading.current_thread().name
+    try:
+        while not stop_event.is_set():  # while not interrupted by user
+            page_ids = store.pop(batch_size)
+            if not page_ids:  # if no pending pages
+                log_summary(
+                    log_mode,
+                    'FINISHED',
+                    stats,
+                    len(store),
+                )
+                break
 
-        try:
-            idle_cnt = 0
-            while not stop_event.is_set():  # while not interrupted by user
-                curr_page_id = store.pop()
-                if stop_event.is_set():  # if interrupted by user
-                    if curr_page_id is not None:
-                        store.mark_failed(curr_page_id)
-                    break
-                if curr_page_id is None:  # if no pending pages
-                    idle_cnt += 1
-                    if idle_cnt >= idle_rounds:
-                        break
-                    time.sleep(idle_sleep)
-                    continue
-                idle_cnt = 0
-                if log_mode == LOG_MODE['detail']:
-                    print(f'{thread_name}: Processing {curr_page_id}..')
+            # submit tasks to the thread pool
+            futures = {
+                executor.submit(resolve_page, page_id): page_id  # map each Future to its page_id
+                for page_id in page_ids  # all page_ids as task arguments
+            }  # the executing worker thread is not determined here
+            pending = set(futures)  # extract keys of futures
+            child_page_ids = []
+            taxa_items = []
+            synonym_items = []
+            done_page_ids = []
+            failed_page_ids = []
 
-                try:
-                    content_of_interest = resolve_page(curr_page_id)
+            while pending and not stop_event.is_set():
+                done, pending = wait(
+                    pending,  # futures to wait for
+                    timeout=0.5,  # wait at most 0.5s
+                    return_when=FIRST_COMPLETED,  # return when any future completes
+                )
+
+                for future in done:
+                    curr_page_id = futures[future]  # look up the page_id for the future
+                    try:
+                        content_of_interest = future.result()  # get the task result or raise the task exception
+                    except Exception as e:
+                        failed_page_ids.append(curr_page_id)
+                        stats['processed'] += 1
+                        stats['failed'] += 1
+                        log_failed(
+                            log_mode,
+                            curr_page_id,
+                            e,
+                        )
+                        continue
+
                     child_cnt = 0
                     synonym_cnt = 0
 
                     for item in content_of_interest:
-                        # add parent column
+                        # use curr_page_id as parent
                         item['parent'] = curr_page_id
                         new_page_id = item['id']
 
                         # item referring to a child
                         if new_page_id and new_page_id != '':
                             child_cnt += 1
-                            store.write_taxa(item)
-                            store.push(new_page_id)
-                            if log_mode == LOG_MODE['detail']:
-                                print(f'\t{thread_name}: Push child {new_page_id}')
+                            taxa_items.append(item)
+                            child_page_ids.append(int(new_page_id))
 
                         # item with empty 'id' referring to a synonym
                         else:
                             synonym_cnt += 1
-                            store.write_synonym(item)
-                            if log_mode == LOG_MODE['detail']:
-                                print(f"\t{thread_name}: Add synonym {item['scientific_name']}")
+                            synonym_items.append(item)
 
-                    store.mark_done(curr_page_id)
-                    if log_mode == LOG_MODE['summary']:
-                        print(
-                            f'[DONE] {thread_name}: page={curr_page_id}, '
-                            f'children_pushed={child_cnt}, '
-                            f'synonyms_added={synonym_cnt}',
-                            flush=True
-                        )
-                except Exception as e:
-                    store.mark_failed(curr_page_id)
-                    if log_mode == LOG_MODE['summary']:
-                        print(f'[FAILED] {thread_name}: page={curr_page_id}, error={e}')
-                    elif log_mode == LOG_MODE['detail']:
-                        print(f'{thread_name}: Failed {curr_page_id}: {e}')
-        finally:
-            store.close()
+                    done_page_ids.append(curr_page_id)
+                    stats['processed'] += 1
+                    stats['children'] += child_cnt
+                    stats['synonyms'] += synonym_cnt
+                    log_done(
+                        log_mode,
+                        curr_page_id,
+                        child_cnt,
+                        synonym_cnt,
+                    )
 
-    executor = ThreadPoolExecutor(
-        max_workers=workers,
-        thread_name_prefix='T',
-    )
-    futures = [
-        executor.submit(worker)
-        for _ in range(workers)
-    ]  # submit worker tasks to the thread pool
-    try:
-        for future in futures:
-            future.result()  # wait for all worker threads to finish
+            if stop_event.is_set():
+                failed_page_ids.extend([
+                    futures[future]
+                    for future in pending
+                ])  # mark remaining tasks in the batch as failed
+                stats['failed'] += len(pending)
+
+            # store the batch
+            store.write_taxa(taxa_items)
+            store.write_synonym(synonym_items)
+            store.push(child_page_ids)
+            store.mark_done(done_page_ids)
+            store.mark_failed(failed_page_ids)
+            log_summary(
+                log_mode,
+                'BATCH',
+                stats,
+                len(store),
+            )
+
     except KeyboardInterrupt:
         stop_event.set()
-        print('[STOPPED] interrupted by user')
+        log_summary(
+            log_mode,
+            'STOPPED',
+            stats,
+            len(store),
+        )
     finally:
+        stop_event.set()
+        executor.shutdown(wait=True)  # wait for running tasks to finish
         store.close()
-        executor.shutdown()
 
 
 def parse_args():
@@ -141,16 +233,10 @@ def parse_args():
         help='number of worker threads'
     )
     parser.add_argument(
-        '--idle-rounds',
+        '--batch-size',
         type=int,
-        default=30,
-        help='consecutive empty polls before worker exit'
-    )
-    parser.add_argument(
-        '--idle-sleep',
-        type=float,
-        default=1.0,
-        help='sleep time between empty polls in seconds'
+        default=50,
+        help='number of pages popped from database each batch',
     )
     parser.add_argument(
         '--log',
@@ -172,7 +258,6 @@ if __name__ == '__main__':
             else SqliteStore(reset=args.reset)
         ),
         workers=args.workers,
-        idle_rounds=args.idle_rounds,
-        idle_sleep=args.idle_sleep,
+        batch_size=args.batch_size,
         log_mode=LOG_MODE[args.log],
     )

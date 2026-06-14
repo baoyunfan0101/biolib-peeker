@@ -2,7 +2,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 from db.abstract_store import *
 
 DB_NAME = 'taxa.db'
@@ -157,85 +157,136 @@ class SqliteStore(AbstractStore):
             f'last_error={last_error}'
         ) from last_error
 
-    def pop(self) -> Optional[int]:
-        def work(conn: sqlite3.Connection) -> Optional[int]:
+    def pop(
+            self,
+            limit: int = 1,
+    ) -> list[int]:
+        if limit <= 0:
+            return []
+
+        def work(conn: sqlite3.Connection) -> list[int]:
             conn.execute('BEGIN IMMEDIATE')
             try:
-                cur = conn.execute(f'''
+                cur = conn.execute('''
                     UPDATE pages
                     SET status = ?
-                    WHERE id = (
+                    WHERE id IN (
                         SELECT id
                         FROM pages
                         WHERE status = ?
                         ORDER BY seq
-                        LIMIT 1
+                        LIMIT ?
                     )
                     RETURNING id
                 ''', (
                     PAGE_STATUS['PROCESSING'],
                     PAGE_STATUS['PENDING'],
+                    limit,
                 ))
-                row = cur.fetchone()
+                rows = cur.fetchall()
                 conn.commit()
-                return None if row is None else row[0]
+                return [row[0] for row in rows]
             except Exception:
                 conn.rollback()
                 raise
 
         return self._execute(work)
 
-    def push(self, page_id: int) -> bool:
-        def work(conn: sqlite3.Connection) -> bool:
+    def push(
+            self,
+            page_ids: list[int],
+    ) -> int:
+        if not page_ids:
+            return 0
+
+        def work(conn: sqlite3.Connection) -> int:
             conn.execute('BEGIN IMMEDIATE')
             try:
-                cur = conn.execute(
-                    'INSERT OR IGNORE INTO pages(id, status) VALUES (?, ?)',
+                before = conn.total_changes
+                conn.executemany('''
+                    INSERT OR IGNORE INTO pages(id, status)
+                    VALUES (?, ?)
+                ''', [
                     (page_id, PAGE_STATUS['PENDING'])
-                )
+                    for page_id in page_ids
+                ])
+                inserted = conn.total_changes - before
                 conn.commit()
-                return cur.rowcount == 1
+                return inserted
             except Exception:
                 conn.rollback()
                 raise
 
         return self._execute(work)
 
-    def mark_done(self, page_id: int) -> None:
-        def work(conn: sqlite3.Connection) -> None:
+    def mark_done(
+            self,
+            page_ids: list[int]
+    ) -> int:
+        if not page_ids:
+            return 0
+
+        def work(conn: sqlite3.Connection) -> int:
             conn.execute('BEGIN IMMEDIATE')
             try:
-                conn.execute(
-                    'UPDATE pages SET status = ? WHERE id = ?',
+                before = conn.total_changes
+                conn.executemany('''
+                    UPDATE pages
+                    SET status = ?
+                    WHERE id = ?
+                ''', [
                     (PAGE_STATUS['DONE'], page_id)
-                )
+                    for page_id in page_ids
+                ])
+                updated = conn.total_changes - before
                 conn.commit()
+                return updated
             except Exception:
                 conn.rollback()
                 raise
 
-        self._execute(work)
+        return self._execute(work)
 
-    def mark_failed(self, page_id: int) -> None:
-        def work(conn: sqlite3.Connection) -> None:
+    def mark_failed(
+            self,
+            page_ids: list[int]
+    ) -> int:
+        if not page_ids:
+            return 0
+
+        def work(conn: sqlite3.Connection) -> int:
             conn.execute('BEGIN IMMEDIATE')
             try:
-                conn.execute(
-                    'UPDATE pages SET status = ? WHERE id = ?',
+                before = conn.total_changes
+                conn.executemany('''
+                    UPDATE pages
+                    SET status = ?
+                    WHERE id = ?
+                ''', [
                     (PAGE_STATUS['FAILED'], page_id)
-                )
+                    for page_id in page_ids
+                ])
+                updated = conn.total_changes - before
                 conn.commit()
+                return updated
             except Exception:
                 conn.rollback()
                 raise
 
-        self._execute(work)
+        return self._execute(work)
 
-    def write_taxa(self, item: dict) -> None:
-        def work(conn: sqlite3.Connection) -> None:
+    def write_taxa(
+            self,
+            items: list[dict]
+    ) -> int:
+        if not items:
+            return 0
+
+        def work(conn: sqlite3.Connection) -> int:
             conn.execute('BEGIN IMMEDIATE')
             try:
-                conn.execute('''
+                before = conn.total_changes
+                conn.executemany('''
                     INSERT OR IGNORE INTO taxa (
                         id
                         ,parent
@@ -247,29 +298,40 @@ class SqliteStore(AbstractStore):
                         ,english_name
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    item['id'],
-                    item['parent'],
-                    CATEGORY.get(item['category']),
-                    RANK.get(item['rank']),
-                    item['scientific_name'],
-                    item['authority_year'],
-                    item['geological_range'],
-                    item['english_name'],
-                ))
+                ''', [
+                    (
+                        item['id'],
+                        item['parent'],
+                        CATEGORY.get(item['category']),
+                        RANK.get(item['rank']),
+                        item['scientific_name'],
+                        item['authority_year'],
+                        item['geological_range'],
+                        item['english_name'],
+                    )
+                    for item in items
+                ])
+                inserted = conn.total_changes - before
                 conn.commit()
+                return inserted
             except Exception:
                 conn.rollback()
                 raise
 
-        self._execute(work)
+        return self._execute(work)
 
-    # Write a record to table 'synonyms'...
-    def write_synonym(self, item: dict) -> None:
-        def work(conn: sqlite3.Connection) -> None:
+    def write_synonym(
+            self,
+            items: list[dict]
+    ) -> int:
+        if not items:
+            return 0
+
+        def work(conn: sqlite3.Connection) -> int:
             conn.execute('BEGIN IMMEDIATE')
             try:
-                conn.execute('''
+                before = conn.total_changes
+                conn.executemany('''
                     INSERT OR IGNORE INTO synonyms (
                         parent
                         ,category
@@ -277,18 +339,23 @@ class SqliteStore(AbstractStore):
                         ,authority_year
                     )
                     VALUES (?, ?, ?, ?)
-                ''', (
-                    item['parent'],
-                    CATEGORY.get(item['category']),
-                    item['scientific_name'],
-                    item['authority_year'],
-                ))
+                ''', [
+                    (
+                        item['parent'],
+                        CATEGORY.get(item['category']),
+                        item['scientific_name'],
+                        item['authority_year'],
+                    )
+                    for item in items
+                ])
+                inserted = conn.total_changes - before
                 conn.commit()
+                return inserted
             except Exception:
                 conn.rollback()
                 raise
 
-        self._execute(work)
+        return self._execute(work)
 
     def close(self) -> None:
         if hasattr(self._local, 'conn'):
@@ -297,9 +364,12 @@ class SqliteStore(AbstractStore):
 
     def __len__(self) -> int:
         conn = self._conn()
-        cur = conn.execute(
-            'SELECT COUNT(*) FROM pages WHERE status = ?',
-            (PAGE_STATUS['PENDING'],)
-        )
+        cur = conn.execute('''
+            SELECT COUNT(*)
+            FROM pages
+            WHERE status = ?
+        ''', (
+            PAGE_STATUS['PENDING'],
+        ))
 
         return cur.fetchone()[0]

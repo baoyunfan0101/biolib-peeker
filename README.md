@@ -57,31 +57,30 @@ biolib-peeker/
 ## Storage
 
 - **MemoryStore**: in-memory BFS queue, exports to CSVs.
-- **SqliteStore**: persistent BFS queue, supports multithreaded crawling, resumes after interruption.
+- **SqliteStore**: persistent BFS queue, resumes after interruption.
 
 ## Run
 
 First run:
 
 ```bash
-python -m main_loop --init-page 14772 --store sqlite --reset --workers 8 --log summary
+python -m main_loop --init-page 14772 --store sqlite --reset --batch-size 50 --workers 8 --log summary
 ```
 
 Resume unfinished pages (only with **SqliteStore**):
 
 ```bash
-python -m main_loop --store sqlite --workers 8 --log summary
+python -m main_loop --store sqlite --batch-size 50 --workers 8 --log summary
 ```
 
-| Argument        | Description                                                                     | Default   |
-|-----------------|---------------------------------------------------------------------------------|-----------|
-| `--init-page`   | Starting BioLib page ID. Only used when `--reset` is set.                       | `14772`   |
-| `--store`       | Storage backend: `memory` or `sqlite`.                                          | `sqlite`  |
-| `--reset`       | Reset existing data before crawling.                                            | `False`   |
-| `--log`         | Log level: `none`, `summary`, or `detail`.                                      | `summary` |
-| `--workers`     | Number of worker threads. Multi-threading is only supported with `SqliteStore`. | `8`       |
-| `--idle-rounds` | Consecutive empty polls before a worker exits.                                  | `30`      |
-| `--idle-sleep`  | Sleep time between empty polls in seconds.                                      | `1.0`     |
+| Argument       | Description                                               | Default  |
+|----------------|-----------------------------------------------------------|----------|
+| `--init-page`  | Starting BioLib page ID. Only used when `--reset` is set. | `14772`  |
+| `--store`      | Storage backend: `memory` or `sqlite`.                    | `sqlite` |
+| `--reset`      | Reset existing data before crawling.                      | `False`  |
+| `--batch-size` | Number of pages popped from database each batch.          | `50`     |
+| `--workers`    | Number of worker threads.                                 | `8`      |
+| `--log`        | Log level: `none`, `summary`, or `detail`.                | `30`     |
 
 ## Disclaimer
 

@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Optional
 
 __all__ = ['AbstractStore', 'PAGE_STATUS', 'CATEGORY', 'RANK']
 
@@ -76,27 +75,27 @@ RANK = {  # sorted by hierarchy
 
 class AbstractStore(ABC):
     @abstractmethod
-    def pop(self) -> Optional[int]:
+    def pop(self, limit: int) -> list[int]:
         pass
 
     @abstractmethod
-    def push(self, page_id: int) -> bool:
+    def push(self, page_ids: list[int]) -> int:
         pass
 
     @abstractmethod
-    def mark_done(self, page_id: int) -> None:
+    def mark_done(self, page_ids: list[int]) -> int:
         pass
 
     @abstractmethod
-    def mark_failed(self, page_id: int) -> None:
+    def mark_failed(self, page_ids: list[int]) -> int:
         pass
 
     @abstractmethod
-    def write_taxa(self, item: dict) -> None:
+    def write_taxa(self, items: list[dict]) -> int:
         pass
 
     @abstractmethod
-    def write_synonym(self, item: dict) -> None:
+    def write_synonym(self, items: list[dict]) -> int:
         pass
 
     @abstractmethod
