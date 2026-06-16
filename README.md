@@ -43,15 +43,20 @@ biolib-peeker/
 ├── LICENSE
 ├── requirements.txt
 ├── .gitignore
-│
-├── biolib_parser.py       # parse BioLib taxonomy pages
-├── main_loop.py           # crawler entry point and worker loop
-│
+├── main.py                 # crawler entry point
+├── biolib_parser.py        # BioLib page parser
+├── crawler/
+│   ├── __init__.py
+│   ├── logger.py           # crawler logger
+│   ├── model.py            # crawler data models
+│   ├── scheduler.py        # task scheduler
+│   ├── warehouse_keeper.py # database coordinator
+│   └── worker.py           # page workers
 └── db/
     ├── __init__.py
-    ├── abstract_store.py  # storage interface and shared mappings
-    ├── memory_store.py    # in-memory queue with CSV export
-    └── sqlite_store.py    # SQLite-backed persistent queue
+    ├── abstract_store.py   # storage interface
+    ├── memory_store.py     # in-memory storage
+    └── sqlite_store.py     # SQLite storage
 ```
 
 ## Storage
@@ -61,26 +66,26 @@ biolib-peeker/
 
 ## Run
 
-First run:
+Start or resume crawling:
 
 ```bash
-python -m main_loop --init-page 14772 --store sqlite --reset --batch-size 50 --workers 8 --log summary
+python main.py
 ```
 
-Resume unfinished pages (only with **SqliteStore**):
+Start from scratch:
 
 ```bash
-python -m main_loop --store sqlite --batch-size 50 --workers 8 --log summary
+python main.py --reset
 ```
 
-| Argument       | Description                                               | Default  |
-|----------------|-----------------------------------------------------------|----------|
-| `--init-page`  | Starting BioLib page ID. Only used when `--reset` is set. | `14772`  |
-| `--store`      | Storage backend: `memory` or `sqlite`.                    | `sqlite` |
-| `--reset`      | Reset existing data before crawling.                      | `False`  |
-| `--batch-size` | Number of pages popped from database each batch.          | `50`     |
-| `--workers`    | Number of worker threads.                                 | `8`      |
-| `--log`        | Log level: `none`, `summary`, or `detail`.                | `30`     |
+| Argument      | Description                                | Default   |
+|---------------|--------------------------------------------|-----------|
+| `--init-page` | Starting BioLib page ID.                   | `14772`   |
+| `--store`     | Storage backend: `memory` or `sqlite`.     | `sqlite`  |
+| `--reset`     | Reset existing data before crawling.       | `False`   |
+| `--workers`   | Number of worker threads.                  | `8`       |
+| `--log-mode`  | Log level: `none`, `summary`, or `detail`. | `summary` |
+| `--log-every` | Summary log interval in completed pages.   | `50`      |
 
 ## Disclaimer
 
