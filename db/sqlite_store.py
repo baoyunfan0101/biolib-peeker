@@ -359,7 +359,9 @@ class SqliteStore(AbstractStore):
 
     def close(self) -> None:
         if hasattr(self._local, 'conn'):
-            self._local.conn.close()
+            conn = self._local.conn
+            conn.execute('PRAGMA wal_checkpoint(FULL)')  # flush WAL contents back to the main database
+            conn.close()
             del self._local.conn
 
     def __len__(self) -> int:
