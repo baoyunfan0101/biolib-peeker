@@ -1,10 +1,13 @@
 from crawler.model import CrawlerStats
-
+LOG_MODE = {}
 LOG_MODE = {
     'none': 0,
     'summary': 1,
     'detail': 2,
 }
+#########################################################################################
+LOG_FILE = 'crawler.log'
+#########################################################################################
 
 
 class CrawlerLogger:
@@ -59,6 +62,11 @@ class CrawlerLogger:
             flush=True,
         )
 
+        #########################################################################################
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(f'[DONE] page={page_id}, children={child_cnt}, synonyms={synonym_cnt}\n')
+        #########################################################################################
+
     def failed(
             self,
             page_id: int,
@@ -72,6 +80,11 @@ class CrawlerLogger:
             f'error={error}',
             flush=True,
         )
+        #########################################################################################
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(f'[FAILED] page={page_id}, error={error}\n')
+        #########################################################################################
+
 
     def maybe_summary(
             self,

@@ -2,6 +2,9 @@ from bs4 import BeautifulSoup, Tag
 import requests
 import threading
 import time
+import os
+import signal
+import random
 
 ROOT_URL = 'https://www.biolib.cz/en/'
 ITEM_FORMAT = {
@@ -13,15 +16,38 @@ ITEM_FORMAT = {
     'geological_range': '',
     'english_name': '',
 }
+AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 115Browser/35.30.0 Chromium/125.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36 OPR/63.0.3368.43',
+    'Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; LCTE; rv:11.0) like Gecko',
+    'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.25 Safari/537.36 Core/1.70.3722.400 QQBrowser/10.5.3739.400',
+    'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36 QIHU 360SE',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 NetType/WIFI MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090819) XWEB/8519 Flue',
+]
 
 _local = threading.local()
-
 
 def _get_session():
     if not hasattr(_local, 'session'):
         session = requests.Session()
         session.headers.update({
-            'User-Agent': 'Mozilla/5.0'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Accept-Language': 'zh-CN,zh;;q=0.9',
+            'Cache-Control': 'max-age=0',
+            'Priority': 'u=0, i',
+            'Sec-Ch-Ua': '"Chromium";v="125", "Not.A/Brand";v="24"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+            'User-Agent': random.choice(AGENTS),
         })
         _local.session = session
     return _local.session
@@ -39,7 +65,7 @@ def _pass_security_check(session):
     )
 
 
-def _get_page(url, max_retries=3):
+def _get_page(url, referer_url=ROOT_URL, max_retries=3):
     session = _get_session()
     errors = []
 
@@ -47,7 +73,10 @@ def _get_page(url, max_retries=3):
         try:
             resp = session.get(
                 url,
-                timeout=(5, 30),  # 5 seconds to connect, 30 seconds to read
+                ##########################################################################
+                timeout=(random.randint(7,15), 30),  # 7-15 seconds to connect, 30 seconds to read
+                # headers={"Referer": referer_url}
+                ##########################################################################
             )
             # raise exception if failed
             resp.raise_for_status()
@@ -60,14 +89,22 @@ def _get_page(url, max_retries=3):
                 _pass_security_check(session)
                 continue
 
-            return soup
+            ################################################################
+            # If anti-crawler mechanism triggered, simulate interrupt
+            page_text = soup.get_text()
+            if "Harvesting server" in page_text:
+                print(f'[ERROR] Harvesting server triggered while getting: {url}')
+                os.kill(os.getpid(), signal.SIGINT)
+            else:
+                return soup
+            ################################################################
+            # return soup
 
         except requests.RequestException as e:
             errors.append(e)
             time.sleep(1)
 
     raise RuntimeError(
-        f'failed to fetch {url}; '
         f'errors={[str(e) for e in errors]}'
     )
 
@@ -238,6 +275,16 @@ def _parse_synonyms(synonyms_soup):
 
     return content_of_interest
 
+# import sqlite3
+# BASE_PATH = "C:\\projects\\biolib-peeker\\data\\"
+# def get_parent_id(page_id):
+#     conn = sqlite3.connect(BASE_PATH + "taxa.db")
+#     cursor = conn.execute(f"SELECT parent FROM taxa WHERE id={page_id}")
+#     conn.commit()
+#     parent_id = cursor.fetchone()[0]
+#     cursor.close()
+#     conn.close()
+#     return parent_id
 
 # main entry
 def resolve_page(page_id, max_retries=3, is_first=True):
@@ -245,7 +292,10 @@ def resolve_page(page_id, max_retries=3, is_first=True):
         return []
     else:
         url = f'{ROOT_URL}taxon/id{page_id}/'
+        # parent_id = get_parent_id(page_id)
+        # referer_url = f'{ROOT_URL}taxon/id{parent_id}/'
 
+    # soup = _get_page(url, referer_url, max_retries=max_retries)
     soup = _get_page(url, max_retries=max_retries)
     content_of_interest = []
 
@@ -322,5 +372,11 @@ if __name__ == '__main__':
     # display_content(resolve_page(40963))  # a synonym case with multiple <em>
     # display_content(resolve_page(3038))  # a case with two identical synonyms but different authorities
     # display_content(resolve_page(1363120))  # a case with two identical synonyms
+    '''
+    [FAILED] page=4692, error=near ",": syntax error
+    [FAILED] page=1200671, error=near ",": syntax error
+    [FAILED] page=117338, error=near ",": syntax error
+    [FAILED] page=117288, error=near ",": syntax error'''
+    display_content(resolve_page(4692))  # initial page
 
-    pass
+pass

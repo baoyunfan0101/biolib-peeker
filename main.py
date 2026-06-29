@@ -12,7 +12,7 @@ def main(
         store_type: str = 'sqlite',
         reset: bool = False,
         workers: int = 8,
-        log_mode: str = 'summary',
+        log_mode: str = 'detail',
         log_every: int = 50,
 ) -> None:
     store = (
@@ -61,13 +61,23 @@ def parse_args():
     parser.add_argument(
         '--workers',
         type=int,
-        default=8,
+
+        #########################################################
+        # default=8,
+        default=16,
+        #########################################################
+
         help='number of worker threads'
     )
     parser.add_argument(
         '--log-mode',
         choices=['none', 'summary', 'detail'],
-        default='summary',
+
+        #########################################################
+        # default='summary',
+        default='detail',
+        #########################################################
+
         help='log level'
     )
     parser.add_argument(

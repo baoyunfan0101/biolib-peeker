@@ -44,7 +44,7 @@ class Scheduler:
 
             self._fill_workers(executor)
 
-            while self.inflight:
+            while self.inflight:  # equivalent to self.inflight.keys()
                 done_futures, _ = wait(
                     self.inflight,  # futures to wait for, equivalent to self.inflight.keys()
                     timeout=0.5,  # wait at most 0.5s
