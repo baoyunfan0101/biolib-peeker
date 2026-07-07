@@ -1,2 +1,2 @@
-requests
 beautifulsoup4
+rubberneck @ git+https://github.com/baoyunfan0101/rubberneck.git

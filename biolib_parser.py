@@ -1,11 +1,11 @@
 from bs4 import BeautifulSoup, Tag
-import requests
-import threading
-import time
+from rubberneck import Item, Request, Response
 
 ROOT_URL = 'https://www.biolib.cz/en/'
+TAXON_URL = ROOT_URL + 'taxon/id{page_id}/'
 ITEM_FORMAT = {
     'id': '',  # primary key
+    'parent': '',
     'category': '',
     'rank': '',
     'scientific_name': '',
@@ -14,67 +14,19 @@ ITEM_FORMAT = {
     'english_name': '',
 }
 
-_local = threading.local()
 
-
-def _get_session():
-    if not hasattr(_local, 'session'):
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0'
-        })
-        _local.session = session
-    return _local.session
-
-
-def _pass_security_check(session):
-    # post payload
-    session.post(
-        ROOT_URL,
-        data={
-            'cntbtn': 'Continue',
-            'action': 'passcheck',
-            'hpsec': ''
-        }
-    )
-
-
-def _get_page(url, max_retries=3):
-    session = _get_session()
-    errors = []
-
-    for _ in range(max_retries):
-        try:
-            resp = session.get(
-                url,
-                timeout=(5, 30),  # 5 seconds to connect, 30 seconds to read
-            )
-            # raise exception if failed
-            resp.raise_for_status()
-
-            soup = BeautifulSoup(resp.text, 'html.parser')
-
-            # if getting security checked
-            if soup.find('input', {'name': 'action', 'value': 'passcheck'}):
-                errors.append(RuntimeError('security check triggered'))
-                _pass_security_check(session)
-                continue
-
-            return soup
-
-        except requests.RequestException as e:
-            errors.append(e)
-            time.sleep(1)
-
-    raise RuntimeError(
-        f'failed to fetch {url}; '
-        f'errors={[str(e) for e in errors]}'
+def taxon_request(page_id: int) -> Request:
+    return Request(
+        TAXON_URL.format(page_id=page_id),
+        meta={
+            'page_id': page_id,
+            'is_first_page': True,
+            'cookiejar': 'biolib',
+        },
     )
 
 
 def _parse_children(taxa_soup):
-    content_of_interest = []
-
     current_category = ''
 
     for child in taxa_soup.children:
@@ -129,14 +81,10 @@ def _parse_children(taxa_soup):
                 strong_tag = child.find('strong')
                 div_item['english_name'] = None if strong_tag is None else strong_tag.get_text(strip=True)
 
-                content_of_interest.append(div_item)
-
-    return content_of_interest
+                yield div_item
 
 
 def _parse_synonyms(synonyms_soup):
-    content_of_interest = []
-
     current_category = 'synonyms'
 
     p_tag = synonyms_soup.find('p')
@@ -150,7 +98,7 @@ def _parse_synonyms(synonyms_soup):
         if isinstance(child, Tag):
             if child.name == 'br':
                 if synonym_item['scientific_name'] != '' or synonym_item['authority_year'] != '':
-                    content_of_interest.append(synonym_item)
+                    yield synonym_item
 
                     # create a new item and reset the category
                     synonym_item = ITEM_FORMAT.copy()
@@ -200,7 +148,7 @@ def _parse_synonyms(synonyms_soup):
             if words[0] == 'incl.' or words[0] == ',':
                 # if it is an incomplete line of included synonyms, append last synonym first
                 if words[0] == ',':
-                    content_of_interest.append(synonym_item)
+                    yield synonym_item
 
                     # create a new item of category 'synonyms_included'
                     synonym_item = ITEM_FORMAT.copy()
@@ -216,7 +164,7 @@ def _parse_synonyms(synonyms_soup):
                         synonym_item['scientific_name'] = ' '.join(
                             words[last_end: i + 1]
                         ).rstrip(',').replace('"', '')
-                        content_of_interest.append(synonym_item)
+                        yield synonym_item
                         last_end = i + 1
 
                         # create a new item of category 'synonyms_included'
@@ -234,23 +182,24 @@ def _parse_synonyms(synonyms_soup):
 
     # in case of synonyms without a trailing <br>, case without a trailing <br>: id=191981
     if synonym_item['scientific_name'] != '':
-        content_of_interest.append(synonym_item)
-
-    return content_of_interest
+        yield synonym_item
 
 
-# main entry
-def resolve_page(page_id, max_retries=3, is_first=True):
-    if page_id is None or page_id == '':
-        return []
+def parse_taxon_response(response: Response):
+    request = response.request
+    if request is not None and 'page_id' in request.meta:
+        page_id = int(request.meta['page_id'])
     else:
-        url = f'{ROOT_URL}taxon/id{page_id}/'
+        raise RuntimeError(f'missing page_id metadata for {response.url}')
 
-    soup = _get_page(url, max_retries=max_retries)
-    content_of_interest = []
+    is_first_page = True
+    if request is not None:
+        is_first_page = bool(request.meta.get('is_first_page', True))
+
+    soup = BeautifulSoup(response.text, 'html.parser')
 
     # parse synonyms (if applicable)
-    if is_first:
+    if is_first_page:
         synonyms_soup = soup.find(
             'div',
             class_='clbarbodyl2'
@@ -258,7 +207,15 @@ def resolve_page(page_id, max_retries=3, is_first=True):
         if synonyms_soup is not None:
             h2_tag = synonyms_soup.find('h2')
             if h2_tag is not None and 'Scientific synonyms' in h2_tag.get_text():
-                content_of_interest += _parse_synonyms(synonyms_soup)
+                for item in _parse_synonyms(synonyms_soup):
+                    item['parent'] = page_id
+                    yield Item({
+                        'type': 'synonym',
+                        'parent': int(item['parent']),
+                        'category': item['category'],
+                        'synonym': item['scientific_name'],
+                        'authority_year': item['authority_year'],
+                    })
 
     # parse taxa children (if applicable)
     taxa_soup = soup.find(
@@ -266,7 +223,22 @@ def resolve_page(page_id, max_retries=3, is_first=True):
         class_='treeareadiv'
     )
     if taxa_soup is not None:
-        content_of_interest += _parse_children(taxa_soup)
+        for item in _parse_children(taxa_soup):
+            item['parent'] = page_id
+            child_page_id = item.get('id')
+            if child_page_id:
+                yield Item({
+                    'type': 'taxon',
+                    'id': int(item['id']),
+                    'parent': int(item['parent']),
+                    'category': item['category'],
+                    'rank': item['rank'],
+                    'scientific_name': item['scientific_name'],
+                    'authority_year': item['authority_year'],
+                    'geological_range': item['geological_range'],
+                    'english_name': item['english_name'],
+                })
+                yield taxon_request(int(child_page_id))
 
     # recurse if this is not the last page, case with multiple pages: id=14772
     next_button = soup.find(
@@ -276,51 +248,11 @@ def resolve_page(page_id, max_retries=3, is_first=True):
     if next_button is not None:
         next_a_tag = next_button.find('a')
         if next_a_tag is not None:
-            content_of_interest += resolve_page(
-                page_id=next_a_tag.get('href')[12:],
-                max_retries=max_retries,
-                is_first=False
+            yield Request(
+                TAXON_URL.format(page_id=next_a_tag.get('href')[12:].rstrip('/')),
+                meta={
+                    'page_id': page_id,
+                    'is_first_page': False,
+                    'cookiejar': 'biolib',
+                },
             )
-
-    return content_of_interest
-
-
-def display_content(content_of_interest):
-    print('[')
-    for item in content_of_interest:
-        print('\t{')
-        for key, value in item.items():
-            print(f'\t\t{key}: {value},')
-        print('\t},')
-    print(']')
-
-
-if __name__ == '__main__':
-    # display_content(resolve_page(14772))  # initial page
-    # display_content(resolve_page(39462))  # a cross-page case
-    # display_content(resolve_page(14900))  # a 12-cross-pages case
-    # display_content(resolve_page(464996))  # a leaf-node case with a few synonyms
-    # display_content(resolve_page(369498))  # a leaf-node case with a lot of synonyms
-    # display_content(resolve_page(557990))  # a internal-node case without synonyms
-    # display_content(resolve_page(470105))  # a case with two included synonyms in a line
-    # display_content(resolve_page(128704))  # a case with three included synonyms in a line
-    # display_content(resolve_page(191981))  # a case with three included synonym in a line and no other synonyms
-    # display_content(resolve_page(135417))  # a case with an included synonym
-    # display_content(resolve_page(14866))  # a case with an included synonym
-    # display_content(resolve_page(62144))  # a case with category 'hybrids'
-    # display_content(resolve_page(276780))  # a case with category 'Nomina dubia'
-    # display_content(resolve_page(3633))  # a case with category 'cultivar'
-    # display_content(resolve_page(40847))  # a case with rank 'subgen.' & 'sect.'
-    # display_content(resolve_page(1135185))  # a case with rank 'life' and scientific name '+ Crataegomespilus'
-    # display_content(resolve_page(94423))  # a case with synonym category (unjustified emendation)
-    # display_content(resolve_page(468440))  # a case with synonym category (misspelling)
-    # display_content(resolve_page(557851))  # a case with synonym category (partim.)
-    # display_content(resolve_page(94423))  # a case with synonym category (unjustified emendation)
-    # display_content(resolve_page(94425))  # a case with synonym category (unjustified replacement name)
-    # display_content(resolve_page(475820))  # a case with synonym like '""Scientific synonym""'
-    # display_content(resolve_page(2083595))  # a case with synonym like 'Scientific synonym f. forma'
-    # display_content(resolve_page(40963))  # a synonym case with multiple <em>
-    # display_content(resolve_page(3038))  # a case with two identical synonyms but different authorities
-    # display_content(resolve_page(1363120))  # a case with two identical synonyms
-
-    pass
