@@ -1,19 +1,20 @@
 # BioLib Peeker
 
+[![Rubberneck](https://img.shields.io/badge/framework-Rubberneck-181717?logo=github)](https://github.com/baoyunfan0101/rubberneck)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 A lightweight personal project for crawling and organizing BioLib taxonomy data.
+
+> **Current version:** v2.0.0  
+> **Legacy standalone version:** [v1.0.0](https://github.com/baoyunfan0101/biolib-peeker/tree/v1.0.0)
 
 ## What it does
 
 Starting from a root taxon page, the rubberneck-based crawler traverses BioLib taxonomy pages and extracts records into two datasets.
 
-- Framework:
-  [![Rubberneck](https://img.shields.io/badge/framework-rubberneck-181717?logo=github)](https://github.com/baoyunfan0101/rubberneck)
+- **Source:** [BioLib](https://www.biolib.cz/)
 
-- Source:  
-  https://www.biolib.cz/
-
-- Default root page:  
-  https://www.biolib.cz/en/taxon/id14772/
+- **Default root page:** [BioLib taxon 14772](https://www.biolib.cz/en/taxon/id14772/)
 
 ### taxa
 
@@ -52,6 +53,12 @@ biolib-peeker/
 ```
 
 ## Run
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
 
 Start or resume crawling:
 
